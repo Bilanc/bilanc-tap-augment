@@ -1,0 +1,128 @@
+{
+  "type": "object",
+  "properties": {
+    "date": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date"
+    },
+    "user_email": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "email"
+    },
+    "active_days": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "total_modified_lines_of_code": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "total_messages": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "total_tool_calls": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "completions_count": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "completions_accepted": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "completions_lines_of_code": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "completions_suggested_lines_of_code": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "chat_messages": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "remote_agent_messages": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "remote_agent_lines_of_code": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "ide_agent_messages": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "ide_agent_lines_of_code": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "cli_agent_interactive_messages": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "cli_agent_interactive_lines_of_code": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "cli_agent_non_interactive_messages": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "cli_agent_non_interactive_lines_of_code": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "inserted_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    }
+  }
+}

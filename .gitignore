@@ -9,3 +9,7 @@ __pycache__/
 
 # Custom stuff
 config.json
+
+
+.venv/
+.env
