@@ -16,6 +16,7 @@ BASE_URL: str = "https://api.augmentcode.com"
 STREAM_NAME: str = "user_activity_daily"
 REQUEST_TIMEOUT_SECONDS: int = 60
 MAX_PAGE_SIZE: int = 100
+AUGMENT_DAILY_READY_HOUR_UTC: int = 3
 
 REQUIRED_CONFIG_KEYS: List[str] = ["start_date"]
 KEY_PROPERTIES: Dict[str, List[str]] = {STREAM_NAME: ["date", "user_email"]}
@@ -192,9 +193,16 @@ def get_user_activity_daily(
     bookmark_value: str = get_bookmark(state, STREAM_NAME, "since", start_date_value)
     next_sync_date: date = singer.utils.strptime_to_utc(bookmark_value).date()
 
-    latest_fully_finalized_analytics_date_utc: date = datetime.now(
-        timezone.utc
-    ).date() - timedelta(days=1)
+    # Augment documents that previous-day analytics become queryable around 02:00 UTC.
+    # We use a 03:00 UTC cutoff to only query for data that is available.
+    # Docs: https://docs.augmentcode.com/analytics/api-reference
+    now_utc: datetime = datetime.now(timezone.utc)
+    if now_utc.hour < AUGMENT_DAILY_READY_HOUR_UTC:
+        latest_fully_finalized_analytics_date_utc: date = now_utc.date() - timedelta(
+            days=2
+        )
+    else:
+        latest_fully_finalized_analytics_date_utc = now_utc.date() - timedelta(days=1)
 
     # If the next bookmark day is beyond yesterday UTC, we have already synced through the latest day
     # we are confident is available from Augment's daily analytics.
