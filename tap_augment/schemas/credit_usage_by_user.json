@@ -1,0 +1,44 @@
+{
+  "type": "object",
+  "properties": {
+    "date": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date"
+    },
+    "model_name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "user_email": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "email"
+    },
+    "service_account_name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "credits_consumed": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "inserted_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    }
+  }
+}

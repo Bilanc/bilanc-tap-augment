@@ -13,13 +13,23 @@ logger = singer.get_logger()
 
 # API and sync controls are fixed in code to match existing tap patterns.
 BASE_URL: str = "https://api.augmentcode.com"
-STREAM_NAME: str = "user_activity_daily"
+USER_ACTIVITY_DAILY_STREAM: str = "user_activity_daily"
+CREDIT_USAGE_BY_USER_STREAM: str = "credit_usage_by_user"
 REQUEST_TIMEOUT_SECONDS: int = 60
-MAX_PAGE_SIZE: int = 100
-AUGMENT_DAILY_READY_HOUR_UTC: int = 3
+USER_ACTIVITY_PAGE_SIZE: int = 100
+CREDIT_USAGE_PAGE_SIZE: int = 500
+AUGMENT_ANALYTICS_READY_HOUR_UTC: int = 3
 
 REQUIRED_CONFIG_KEYS: List[str] = ["start_date"]
-KEY_PROPERTIES: Dict[str, List[str]] = {STREAM_NAME: ["date", "user_email"]}
+KEY_PROPERTIES: Dict[str, List[str]] = {
+    USER_ACTIVITY_DAILY_STREAM: ["date", "user_email"],
+    CREDIT_USAGE_BY_USER_STREAM: [
+        "date",
+        "model_name",
+        "user_email",
+        "service_account_name",
+    ],
+}
 SUB_STREAMS: Dict[str, List[str]] = {}
 
 
@@ -190,31 +200,26 @@ def get_user_activity_daily(
     api_key: str,
 ) -> Dict[str, Any]:
     # Sync daily per-user usage records from Augment.
-    bookmark_value: str = get_bookmark(state, STREAM_NAME, "since", start_date_value)
+    stream_name: str = USER_ACTIVITY_DAILY_STREAM
+    bookmark_value: str = get_bookmark(state, stream_name, "since", start_date_value)
     next_sync_date: date = singer.utils.strptime_to_utc(bookmark_value).date()
 
-    # Augment documents that previous-day analytics become queryable around 02:00 UTC.
-    # We use a 03:00 UTC cutoff to only query for data that is available.
-    # Docs: https://docs.augmentcode.com/analytics/api-reference
-    now_utc: datetime = datetime.now(timezone.utc)
-    if now_utc.hour < AUGMENT_DAILY_READY_HOUR_UTC:
-        latest_fully_finalized_analytics_date_utc: date = now_utc.date() - timedelta(
-            days=2
-        )
-    else:
-        latest_fully_finalized_analytics_date_utc = now_utc.date() - timedelta(days=1)
+    latest_fully_finalized_analytics_date_utc = (
+        get_latest_finalized_analytics_date_utc()
+    )
 
     # If the next bookmark day is beyond yesterday UTC, we have already synced through the latest day
     # we are confident is available from Augment's daily analytics.
     if next_sync_date > latest_fully_finalized_analytics_date_utc:
         logger.info(
-            "No Augment data to sync. next_sync_date=%s latest_fully_finalized_analytics_date_utc=%s",
+            "No Augment data to sync for %s. next_sync_date=%s latest_fully_finalized_analytics_date_utc=%s",
+            stream_name,
             next_sync_date,
             latest_fully_finalized_analytics_date_utc,
         )
         return state
 
-    with metrics.record_counter(STREAM_NAME) as counter:
+    with metrics.record_counter(stream_name) as counter:
         # Iterate day-by-day through the latest finalized report day (yesterday UTC).
         while next_sync_date <= latest_fully_finalized_analytics_date_utc:
             sync_date_value: str = next_sync_date.isoformat()
@@ -284,20 +289,12 @@ def get_user_activity_daily(
                     }
                     record["inserted_at"] = singer.utils.strftime(extraction_time)
 
-                    try:
-                        # Apply schema-based coercion before writing Singer records.
-                        with singer.Transformer() as transformer:
-                            transformed_record: Dict[str, Any] = transformer.transform(
-                                record,
-                                schema,
-                                metadata=metadata.to_map(mdata),
-                            )
-                    except Exception:
-                        logger.exception("Failed to transform record [%s]", record)
-                        raise
-
-                    singer.write_record(
-                        STREAM_NAME, transformed_record, time_extracted=extraction_time
+                    write_transformed_record(
+                        stream_name=stream_name,
+                        record=record,
+                        schema=schema,
+                        mdata=mdata,
+                        extraction_time=extraction_time,
                     )
                     counter.increment()
 
@@ -311,7 +308,106 @@ def get_user_activity_daily(
             # Advance bookmark to the next day after a full day is completely paged.
             following_sync_date: date = next_sync_date + timedelta(days=1)
             singer.write_bookmark(
-                state, STREAM_NAME, "since", following_sync_date.isoformat()
+                state, stream_name, "since", following_sync_date.isoformat()
+            )
+            singer.write_state(state)
+            next_sync_date = following_sync_date
+
+    return state
+
+
+def get_credit_usage_by_user(
+    schema: Dict[str, Any],
+    state: Dict[str, Any],
+    mdata: List[Dict[str, Any]],
+    start_date_value: str,
+    api_key: str,
+) -> Dict[str, Any]:
+    # Sync daily per-user-per-model credit usage records from Augment.
+    stream_name: str = CREDIT_USAGE_BY_USER_STREAM
+    bookmark_value: str = get_bookmark(state, stream_name, "since", start_date_value)
+    next_sync_date: date = singer.utils.strptime_to_utc(bookmark_value).date()
+    latest_fully_finalized_analytics_date_utc = (
+        get_latest_finalized_analytics_date_utc()
+    )
+
+    if next_sync_date > latest_fully_finalized_analytics_date_utc:
+        logger.info(
+            "No Augment data to sync for %s. next_sync_date=%s latest_fully_finalized_analytics_date_utc=%s",
+            stream_name,
+            next_sync_date,
+            latest_fully_finalized_analytics_date_utc,
+        )
+        return state
+
+    with metrics.record_counter(stream_name) as counter:
+        while next_sync_date <= latest_fully_finalized_analytics_date_utc:
+            sync_date_value: str = next_sync_date.isoformat()
+            cursor: Optional[str] = None
+
+            while True:
+                response_data: Dict[str, Any] = _request_credit_usage_by_user_page(
+                    api_key=api_key,
+                    start_date_value=sync_date_value,
+                    end_date_value=sync_date_value,
+                    cursor=cursor,
+                )
+                records: List[Dict[str, Any]] = response_data.get("records", [])
+                extraction_time: str = singer.utils.now()
+
+                for api_record in records:
+                    user_email: Optional[str] = api_record.get("user_email")
+                    service_account_name: Optional[str] = api_record.get(
+                        "service_account_name"
+                    )
+                    identity_count: int = int(bool(user_email)) + int(
+                        bool(service_account_name)
+                    )
+
+                    if identity_count != 1:
+                        logger.warning(
+                            "Skipping %s record with invalid identity fields: %s",
+                            stream_name,
+                            api_record,
+                        )
+                        continue
+
+                    model_name: Optional[str] = api_record.get("model_name")
+                    if not model_name:
+                        logger.warning(
+                            "Skipping %s record without model_name: %s",
+                            stream_name,
+                            api_record,
+                        )
+                        continue
+
+                    record = {
+                        "date": api_record.get("date") or sync_date_value,
+                        "model_name": model_name,
+                        "user_email": user_email,
+                        "service_account_name": service_account_name,
+                        "credits_consumed": api_record.get("credits_consumed"),
+                        "inserted_at": singer.utils.strftime(extraction_time),
+                    }
+                    write_transformed_record(
+                        stream_name=stream_name,
+                        record=record,
+                        schema=schema,
+                        mdata=mdata,
+                        extraction_time=extraction_time,
+                    )
+                    counter.increment()
+
+                pagination: Dict[str, Any] = response_data.get("pagination") or {}
+                has_more: bool = bool(pagination.get("has_more"))
+                cursor = pagination.get("next_cursor")
+
+                if not has_more or not cursor:
+                    break
+
+            following_sync_date: date = next_sync_date + timedelta(days=1)
+            singer.write_bookmark(
+                state, stream_name, "since", following_sync_date.isoformat()
             )
             singer.write_state(state)
             next_sync_date = following_sync_date
@@ -329,6 +425,37 @@ def get_bookmark(
     return start_date
 
 
+def get_latest_finalized_analytics_date_utc() -> date:
+    # Augment documents that prior-day analytics become queryable around 02:00 UTC.
+    # We use a 03:00 UTC cutoff to only query for data that is likely finalized.
+    now_utc: datetime = datetime.now(timezone.utc)
+    if now_utc.hour < AUGMENT_ANALYTICS_READY_HOUR_UTC:
+        return now_utc.date() - timedelta(days=2)
+    return now_utc.date() - timedelta(days=1)
+
+
+def write_transformed_record(
+    stream_name: str,
+    record: Dict[str, Any],
+    schema: Dict[str, Any],
+    mdata: List[Dict[str, Any]],
+    extraction_time: str,
+) -> None:
+    try:
+        # Apply schema-based coercion before writing Singer records.
+        with singer.Transformer() as transformer:
+            transformed_record: Dict[str, Any] = transformer.transform(
+                record,
+                schema,
+                metadata=metadata.to_map(mdata),
+            )
+    except Exception:
+        logger.exception("Failed to transform %s record [%s]", stream_name, record)
+        raise
+
+    singer.write_record(stream_name, transformed_record, time_extracted=extraction_time)
+
+
 def _request_user_activity_page(
     api_key: str,
     start_date_value: str,
@@ -336,19 +463,58 @@ def _request_user_activity_page(
     cursor: Optional[str],
 ) -> Dict[str, Any]:
     # Request one page from Augment's user-activity endpoint for a single day.
-    headers: Dict[str, str] = {"Authorization": f"Bearer {api_key}"}
     params: Dict[str, Any] = {
         "start_date": start_date_value,
         "end_date": end_date_value,
-        "page_size": MAX_PAGE_SIZE,
+        "page_size": USER_ACTIVITY_PAGE_SIZE,
     }
     if cursor:
         params["cursor"] = cursor
 
-    url: str = f"{BASE_URL}/analytics/v0/user-activity"
+    return _request_analytics_page(
+        stream_name=USER_ACTIVITY_DAILY_STREAM,
+        endpoint_path="/analytics/v0/user-activity",
+        api_key=api_key,
+        params=params,
+    )
 
-    # V1 behavior: single request per page, fail fast on non-2xx.
-    with metrics.http_request_timer(STREAM_NAME) as timer:
+
+def _request_credit_usage_by_user_page(
+    api_key: str,
+    start_date_value: str,
+    end_date_value: str,
+    cursor: Optional[str],
+) -> Dict[str, Any]:
+    # Request one page from Augment's credit-usage-by-user endpoint for a single day.
+    params: Dict[str, Any] = {
+        "start_date": start_date_value,
+        "end_date": end_date_value,
+        "by_date": "true",
+        "by_model": "true",
+        "page_size": CREDIT_USAGE_PAGE_SIZE,
+    }
+    if cursor:
+        params["cursor"] = cursor
+
+    return _request_analytics_page(
+        stream_name=CREDIT_USAGE_BY_USER_STREAM,
+        endpoint_path="/analytics/v0/credit-usage-by-user",
+        api_key=api_key,
+        params=params,
+    )
+
+
+def _request_analytics_page(
+    stream_name: str,
+    endpoint_path: str,
+    api_key: str,
+    params: Dict[str, Any],
+) -> Dict[str, Any]:
+    headers: Dict[str, str] = {"Authorization": f"Bearer {api_key}"}
+    url: str = f"{BASE_URL}{endpoint_path}"
+
+    # Single request per page, fail fast on non-2xx.
+    with metrics.http_request_timer(stream_name) as timer:
         response: requests.Response = session.get(
             url=url,
             headers=headers,
@@ -399,7 +565,8 @@ def get_abs_path(path: str) -> str:
 
 
 SYNC_FUNCTIONS = {
-    STREAM_NAME: get_user_activity_daily,
+    USER_ACTIVITY_DAILY_STREAM: get_user_activity_daily,
+    CREDIT_USAGE_BY_USER_STREAM: get_credit_usage_by_user,
 }
 
 
