@@ -27,6 +27,11 @@
         "null"
       ]
     },
+    "user_identifier": {
+      "type": [
+        "string"
+      ]
+    },
     "credits_consumed": {
       "type": [
         "integer",

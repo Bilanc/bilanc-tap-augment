@@ -26,8 +26,7 @@ KEY_PROPERTIES: Dict[str, List[str]] = {
     CREDIT_USAGE_BY_USER_STREAM: [
         "date",
         "model_name",
-        "user_email",
-        "service_account_name",
+        "user_identifier",
     ],
 }
 SUB_STREAMS: Dict[str, List[str]] = {}
@@ -386,6 +385,7 @@ def get_credit_usage_by_user(
                         "model_name": model_name,
                         "user_email": user_email,
                         "service_account_name": service_account_name,
+                        "user_identifier": user_email or service_account_name,
                         "credits_consumed": api_record.get("credits_consumed"),
                         "inserted_at": singer.utils.strftime(extraction_time),
                     }
