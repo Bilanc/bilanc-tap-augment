@@ -15,6 +15,17 @@
       ],
       "format": "email"
     },
+    "service_account_name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "user_identifier": {
+      "type": [
+        "string"
+      ]
+    },
     "active_days": {
       "type": [
         "integer",
