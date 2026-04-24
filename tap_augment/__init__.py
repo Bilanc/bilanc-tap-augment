@@ -22,7 +22,7 @@ AUGMENT_ANALYTICS_READY_HOUR_UTC: int = 3
 
 REQUIRED_CONFIG_KEYS: List[str] = ["start_date"]
 KEY_PROPERTIES: Dict[str, List[str]] = {
-    USER_ACTIVITY_DAILY_STREAM: ["date", "user_email"],
+    USER_ACTIVITY_DAILY_STREAM: ["date", "user_identifier"],
     CREDIT_USAGE_BY_USER_STREAM: [
         "date",
         "model_name",
@@ -237,8 +237,19 @@ def get_user_activity_daily(
 
                 for user in users:
                     user_email: Optional[str] = user.get("user_email")
+                    service_account_name: Optional[str] = user.get(
+                        "service_account_name"
+                    )
+                    identity_count: int = int(bool(user_email)) + int(
+                        bool(service_account_name)
+                    )
 
-                    if not user_email:
+                    if identity_count != 1:
+                        logger.warning(
+                            "Skipping %s record with invalid identity fields: %s",
+                            stream_name,
+                            user,
+                        )
                         continue
 
                     metrics_payload: Dict[str, Any] = user.get("metrics") or {}
@@ -246,6 +257,8 @@ def get_user_activity_daily(
                     record: Dict[str, Any] = {
                         "date": sync_date_value,
                         "user_email": user_email,
+                        "service_account_name": service_account_name,
+                        "user_identifier": user_email or service_account_name,
                         "active_days": user.get("active_days"),
                         "total_modified_lines_of_code": metrics_payload.get(
                             "total_modified_lines_of_code"
