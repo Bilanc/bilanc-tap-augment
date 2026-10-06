@@ -11,7 +11,7 @@ setup(
     classifiers=["Programming Language :: Python :: 3 :: Only"],
     install_requires=[
         "singer-python==5.12.1",
-        "requests==2.29.0",
+        "requests==2.30.0",
         "urllib3==2.8.0",
         "backoff==1.8.0",
     ],
